@@ -1,9 +1,8 @@
 """
-Step 3 (Final Correct Version)
-------------------------------
-- Business metrics (KPIs) → calculated on the FULL dataset
-- Fraud model → trained only on training data
-- Risk scores → calculated ONLY on unseen test data
+Step 4 (Real OpenAI version) - Secure API Key
+---------------------------------------------
+- API key is read from api_key.txt (not hardcoded)
+- api_key.txt is ignored by Git
 """
 
 import streamlit as st
@@ -13,21 +12,45 @@ import plotly.express as px
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+from openai import OpenAI
+import os
+
+# -----------------------------
+# Load API Key securely from file
+# -----------------------------
+def load_api_key():
+    """Load OpenAI API key from api_key.txt file"""
+    key_file = "api_key.txt"
+    
+    if os.path.exists(key_file):
+        with open(key_file, "r") as f:
+            key = f.read().strip()
+            if key and key != "PASTE_YOUR_OPENAI_API_KEY_HERE":
+                return key
+    
+    # Fallback: try environment variable
+    return os.getenv("OPENAI_API_KEY")
 
 # -----------------------------
 # Page configuration
 # -----------------------------
 st.set_page_config(
-    page_title="Payments Dashboard + Fraud Scoring",
+    page_title="Payments Dashboard + Fraud + GenAI",
     page_icon="💳",
     layout="wide"
 )
 
-st.title("💳 Payments Dashboard + Fraud Risk Scoring")
-st.markdown("**Prototype – Step 3 (Correct version)**")
+st.title("💳 Payments Real-Time Prototype")
+st.markdown("**Step 4 – Dashboard + Fraud Scoring + Real OpenAI GenAI**")
 
 # -----------------------------
-# Load the data
+# Initialize OpenAI client
+# -----------------------------
+api_key = load_api_key()
+client = OpenAI(api_key=api_key) if api_key else None
+
+# -----------------------------
+# Load data
 # -----------------------------
 @st.cache_data
 def load_data():
@@ -38,13 +61,12 @@ def load_data():
 df = load_data()
 
 # -----------------------------
-# Train model with proper split
+# Train fraud model (proper split)
 # -----------------------------
 @st.cache_resource
 def train_fraud_model(data):
     df_model = data.copy()
 
-    # Encode categorical features
     le_method = LabelEncoder()
     le_region = LabelEncoder()
     le_merchant = LabelEncoder()
@@ -57,19 +79,12 @@ def train_fraud_model(data):
     X = df_model[features]
     y = df_model["is_fraud"]
 
-    # 75% train / 25% test + keep the original indices
     X_train, X_test, y_train, y_test, idx_train, idx_test = train_test_split(
-        X, y, df_model.index,
-        test_size=0.25,
-        random_state=42,
-        stratify=y
+        X, y, df_model.index, test_size=0.25, random_state=42, stratify=y
     )
 
     model = RandomForestClassifier(
-        n_estimators=80,
-        max_depth=7,
-        class_weight="balanced",
-        random_state=42
+        n_estimators=80, max_depth=7, class_weight="balanced", random_state=42
     )
     model.fit(X_train, y_train)
 
@@ -77,118 +92,177 @@ def train_fraud_model(data):
 
 model, le_method, le_region, le_merchant, features, test_indices = train_fraud_model(df)
 
-# -----------------------------
-# Create scored test set (unseen data only)
-# -----------------------------
-df_test = df.loc[test_indices].copy()
+# Score only test set
+df_test = df.loc[test_indices].copy().reset_index(drop=True)
 df_test["payment_method_enc"] = le_method.transform(df_test["payment_method"])
 df_test["region_enc"] = le_region.transform(df_test["region"])
 df_test["merchant_enc"] = le_merchant.transform(df_test["merchant"])
-
 df_test["risk_score"] = (model.predict_proba(df_test[features])[:, 1] * 100).round(1)
 
+df_test["label"] = df_test.apply(
+    lambda r: f"{r['transaction_id']} | {r['merchant']} | €{r['amount']:.2f} | Risk {r['risk_score']}",
+    axis=1
+)
+
 # -----------------------------
-# 1. Business Metrics → FULL dataset
+# Sidebar
+# -----------------------------
+st.sidebar.header("GenAI Assistant")
+
+selected_label = st.sidebar.selectbox(
+    "Select a transaction:",
+    options=df_test["label"].tolist()
+)
+
+selected_row = df_test[df_test["label"] == selected_label].iloc[0]
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Selected Transaction")
+st.sidebar.write(f"**ID:** {selected_row['transaction_id']}")
+st.sidebar.write(f"**Merchant:** {selected_row['merchant']}")
+st.sidebar.write(f"**Amount:** €{selected_row['amount']:.2f}")
+st.sidebar.write(f"**Method:** {selected_row['payment_method']}")
+st.sidebar.write(f"**Region:** {selected_row['region']}")
+st.sidebar.write(f"**Risk Score:** {selected_row['risk_score']}")
+st.sidebar.write(f"**Actual Fraud:** {'Yes' if selected_row['is_fraud'] == 1 else 'No'}")
+
+# -----------------------------
+# OpenAI Helper Functions
+# -----------------------------
+def call_openai(system_prompt: str, user_prompt: str) -> str:
+    if client is None:
+        return "⚠️ OpenAI API key not found. Please put your key inside the file **api_key.txt**"
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.3,
+            max_tokens=600
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Error calling OpenAI: {str(e)}"
+
+
+def generate_dispute_summary(row) -> str:
+    system_prompt = """You are an expert assistant working for a global digital payments company.
+Your task is to write clear, professional, and neutral dispute summaries for payment transactions.
+Use formal but easy-to-understand language. Do not invent information that is not provided."""
+
+    user_prompt = f"""
+Please write a concise dispute summary for the following payment transaction:
+
+Transaction ID: {row['transaction_id']}
+Timestamp: {row['timestamp']}
+Customer ID: {row['customer_id']}
+Payment Method: {row['payment_method']}
+Merchant: {row['merchant']}
+Amount: €{row['amount']:.2f} {row['currency']}
+Region: {row['region']}
+Risk Score (0-100): {row['risk_score']}
+Actual Fraud Label: {'Yes' if row['is_fraud'] == 1 else 'No'}
+
+Structure the summary with these sections:
+1. Transaction Details
+2. Risk Assessment
+3. Summary
+4. Recommended Action
+"""
+    return call_openai(system_prompt, user_prompt)
+
+
+def generate_chat_response(question: str, row) -> str:
+    system_prompt = """You are a helpful AI assistant for a payments fraud and support team.
+Answer questions clearly and based only on the transaction data provided.
+If you don't know something, say so. Keep answers concise and professional."""
+
+    user_prompt = f"""
+Here is the selected transaction data:
+
+Transaction ID: {row['transaction_id']}
+Timestamp: {row['timestamp']}
+Customer ID: {row['customer_id']}
+Payment Method: {row['payment_method']}
+Merchant: {row['merchant']}
+Amount: €{row['amount']:.2f} {row['currency']}
+Region: {row['region']}
+Risk Score: {row['risk_score']}
+Actual Fraud Label: {'Yes' if row['is_fraud'] == 1 else 'No'}
+
+User question: {question}
+
+Please answer the question based on the data above.
+"""
+    return call_openai(system_prompt, user_prompt)
+
+# -----------------------------
+# Main Area
 # -----------------------------
 st.subheader("Business Metrics (Full Dataset)")
-
 col1, col2, col3, col4 = st.columns(4)
-
-total_transactions = len(df)
-total_value = df["amount"].sum()
-actual_fraud_count = df["is_fraud"].sum()
-actual_fraud_rate = (actual_fraud_count / total_transactions) * 100
-
-col1.metric("Total Transactions", f"{total_transactions:,}")
-col2.metric("Total Value", f"€{total_value:,.0f}")
-col3.metric("Actual Fraud Count", f"{actual_fraud_count}")
-col4.metric("Actual Fraud Rate", f"{actual_fraud_rate:.2f}%")
+col1.metric("Total Transactions", f"{len(df):,}")
+col2.metric("Total Value", f"€{df['amount'].sum():,.0f}")
+col3.metric("Actual Fraud Count", f"{df['is_fraud'].sum()}")
+col4.metric("Actual Fraud Rate", f"{(df['is_fraud'].sum() / len(df) * 100):.2f}%")
 
 st.markdown("---")
 
-# -----------------------------
-# 2. Model Metrics → TEST set only
-# -----------------------------
-st.subheader("Model Risk Scoring (Unseen Test Data Only)")
+st.subheader("GenAI Features (Powered by OpenAI gpt-4o-mini)")
 
-col1, col2, col3 = st.columns(3)
+if client is None:
+    st.warning("⚠️ OpenAI API key not found. Please open the file **api_key.txt** and paste your key there.")
+else:
+    st.success("OpenAI client is ready (key loaded from api_key.txt)")
 
-test_size = len(df_test)
-high_risk_count = len(df_test[df_test["risk_score"] >= 70])
-avg_risk = df_test["risk_score"].mean()
+tab1, tab2 = st.tabs(["Dispute Summary", "AI Assistant Chat"])
 
-col1.metric("Test Set Size", f"{test_size:,}")
-col2.metric("High Risk (≥70)", f"{high_risk_count}")
-col3.metric("Average Risk Score", f"{avg_risk:.1f}")
+with tab1:
+    st.markdown("### Automatic Dispute Summary")
+    st.markdown("Select a transaction in the sidebar, then click the button.")
 
-st.info("Risk scores are calculated only on data the model has never seen (25% test set).")
+    if st.button("Generate Dispute Summary", type="primary"):
+        with st.spinner("Generating summary with OpenAI..."):
+            summary = generate_dispute_summary(selected_row)
+        st.markdown(summary)
 
-st.markdown("---")
+with tab2:
+    st.markdown("### AI Assistant")
+    st.markdown("Ask questions about the selected transaction.")
 
-# -----------------------------
-# Charts (Full data)
-# -----------------------------
-st.subheader("Overview (Full Dataset)")
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-col_left, col_right = st.columns(2)
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-with col_left:
-    method_counts = df["payment_method"].value_counts().reset_index()
-    method_counts.columns = ["Payment Method", "Count"]
-    fig1 = px.pie(method_counts, names="Payment Method", values="Count",
-                  title="Transactions by Payment Method")
-    st.plotly_chart(fig1, use_container_width=True)
+    if prompt := st.chat_input("Ask something about the selected transaction..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-with col_right:
-    region_counts = df["region"].value_counts().reset_index()
-    region_counts.columns = ["Region", "Count"]
-    fig2 = px.bar(region_counts, x="Region", y="Count",
-                  title="Transactions by Region", color="Count",
-                  color_continuous_scale="Blues")
-    fig2.update_layout(xaxis_tickangle=-30)
-    st.plotly_chart(fig2, use_container_width=True)
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                response = generate_chat_response(prompt, selected_row)
+            st.markdown(response)
+        st.session_state.messages.append({"role": "assistant", "content": response})
 
 st.markdown("---")
 
-# -----------------------------
-# High Risk Transactions (from test set only)
-# -----------------------------
-st.subheader("High Risk Transactions (Risk Score ≥ 70) — Test Set Only")
-
+st.subheader("High Risk Transactions (Test Set – Score ≥ 70)")
 high_risk = df_test[df_test["risk_score"] >= 70].sort_values("risk_score", ascending=False)
 
 if len(high_risk) > 0:
     st.dataframe(
         high_risk[["transaction_id", "timestamp", "payment_method", "amount",
-                   "merchant", "region", "risk_score", "is_fraud"]].head(20),
+                   "merchant", "region", "risk_score", "is_fraud"]].head(15),
         use_container_width=True
     )
 else:
-    st.info("No transactions with risk score ≥ 70 in the test set.")
+    st.info("No high-risk transactions found in the test set.")
 
-st.markdown("---")
-
-# -----------------------------
-# Sample of scored test transactions
-# -----------------------------
-st.subheader("Sample of Scored Transactions (Test Set)")
-
-sample = df_test.sort_values("timestamp", ascending=False).head(30).copy()
-
-def risk_level(score):
-    if score >= 70:
-        return "High"
-    elif score >= 40:
-        return "Medium"
-    else:
-        return "Low"
-
-sample["Risk Level"] = sample["risk_score"].apply(risk_level)
-
-st.dataframe(
-    sample[["transaction_id", "timestamp", "payment_method", "amount",
-            "merchant", "region", "risk_score", "Risk Level", "is_fraud"]],
-    use_container_width=True
-)
-
-st.caption("Model: Random Forest | Train/Test split 75/25 | Risk scores only on unseen data")
+st.caption("Model: Random Forest (proper train/test) | GenAI: OpenAI gpt-4o-mini | Key loaded from api_key.txt")

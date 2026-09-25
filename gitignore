@@ -1,0 +1,19 @@
+# Secret files
+api_key.txt
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# Streamlit
+.streamlit/
+
+# Data (optional - remove this line if you want to commit the CSV)
+# payments_data.csv
+
+# OS files
+.DS_Store
+Thumbs.db
