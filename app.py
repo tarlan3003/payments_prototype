@@ -1,8 +1,10 @@
 """
-Step 4 (Real OpenAI version) - Secure API Key
----------------------------------------------
-- API key is read from api_key.txt (not hardcoded)
-- api_key.txt is ignored by Git
+Final Prototype
+- Business metrics on full data
+- Fraud model with proper train/test split
+- Charts (restored)
+- Real OpenAI for Dispute Summary + Chat
+- Chatbot can answer both specific transaction questions AND general dataset questions
 """
 
 import streamlit as st
@@ -16,23 +18,19 @@ from openai import OpenAI
 import os
 
 # -----------------------------
-# Load API Key securely from file
+# Load API Key securely
 # -----------------------------
 def load_api_key():
-    """Load OpenAI API key from api_key.txt file"""
     key_file = "api_key.txt"
-    
     if os.path.exists(key_file):
         with open(key_file, "r") as f:
             key = f.read().strip()
             if key and key != "PASTE_YOUR_OPENAI_API_KEY_HERE":
                 return key
-    
-    # Fallback: try environment variable
     return os.getenv("OPENAI_API_KEY")
 
 # -----------------------------
-# Page configuration
+# Page config
 # -----------------------------
 st.set_page_config(
     page_title="Payments Dashboard + Fraud + GenAI",
@@ -41,10 +39,10 @@ st.set_page_config(
 )
 
 st.title("💳 Payments Real-Time Prototype")
-st.markdown("**Step 4 – Dashboard + Fraud Scoring + Real OpenAI GenAI**")
+st.markdown("**Dashboard + Fraud Scoring + OpenAI GenAI**")
 
 # -----------------------------
-# Initialize OpenAI client
+# OpenAI client
 # -----------------------------
 api_key = load_api_key()
 client = OpenAI(api_key=api_key) if api_key else None
@@ -61,7 +59,7 @@ def load_data():
 df = load_data()
 
 # -----------------------------
-# Train fraud model (proper split)
+# Train fraud model
 # -----------------------------
 @st.cache_resource
 def train_fraud_model(data):
@@ -92,7 +90,7 @@ def train_fraud_model(data):
 
 model, le_method, le_region, le_merchant, features, test_indices = train_fraud_model(df)
 
-# Score only test set
+# Score test set
 df_test = df.loc[test_indices].copy().reset_index(drop=True)
 df_test["payment_method_enc"] = le_method.transform(df_test["payment_method"])
 df_test["region_enc"] = le_region.transform(df_test["region"])
@@ -127,11 +125,11 @@ st.sidebar.write(f"**Risk Score:** {selected_row['risk_score']}")
 st.sidebar.write(f"**Actual Fraud:** {'Yes' if selected_row['is_fraud'] == 1 else 'No'}")
 
 # -----------------------------
-# OpenAI Helper Functions
+# OpenAI helpers
 # -----------------------------
 def call_openai(system_prompt: str, user_prompt: str) -> str:
     if client is None:
-        return "⚠️ OpenAI API key not found. Please put your key inside the file **api_key.txt**"
+        return "⚠️ OpenAI API key not found. Please put your key inside **api_key.txt**"
 
     try:
         response = client.chat.completions.create(
@@ -141,7 +139,7 @@ def call_openai(system_prompt: str, user_prompt: str) -> str:
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.3,
-            max_tokens=600
+            max_tokens=700
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -150,11 +148,11 @@ def call_openai(system_prompt: str, user_prompt: str) -> str:
 
 def generate_dispute_summary(row) -> str:
     system_prompt = """You are an expert assistant working for a global digital payments company.
-Your task is to write clear, professional, and neutral dispute summaries for payment transactions.
-Use formal but easy-to-understand language. Do not invent information that is not provided."""
+Write clear, professional, and neutral dispute summaries.
+Do not invent information."""
 
     user_prompt = f"""
-Please write a concise dispute summary for the following payment transaction:
+Write a concise dispute summary for this transaction:
 
 Transaction ID: {row['transaction_id']}
 Timestamp: {row['timestamp']}
@@ -166,7 +164,7 @@ Region: {row['region']}
 Risk Score (0-100): {row['risk_score']}
 Actual Fraud Label: {'Yes' if row['is_fraud'] == 1 else 'No'}
 
-Structure the summary with these sections:
+Use these sections:
 1. Transaction Details
 2. Risk Assessment
 3. Summary
@@ -175,14 +173,30 @@ Structure the summary with these sections:
     return call_openai(system_prompt, user_prompt)
 
 
-def generate_chat_response(question: str, row) -> str:
-    system_prompt = """You are a helpful AI assistant for a payments fraud and support team.
-Answer questions clearly and based only on the transaction data provided.
-If you don't know something, say so. Keep answers concise and professional."""
+def generate_chat_response(question: str, row, full_df) -> str:
+    """Can answer both specific transaction questions and general dataset questions."""
+
+    # Basic dataset statistics for general questions
+    total_tx = len(full_df)
+    total_value = full_df["amount"].sum()
+    fraud_count = full_df["is_fraud"].sum()
+    fraud_rate = (fraud_count / total_tx) * 100
+    avg_amount = full_df["amount"].mean()
+    methods = full_df["payment_method"].value_counts().to_dict()
+    regions = full_df["region"].value_counts().to_dict()
+
+    system_prompt = """You are a helpful AI assistant for a payments company.
+You can answer two types of questions:
+1. Questions about the currently selected transaction
+2. General questions about the overall dataset
+
+Answer clearly and based only on the provided information.
+If the question is general, use the dataset statistics.
+If the question is about the selected transaction, use the transaction data.
+"""
 
     user_prompt = f"""
-Here is the selected transaction data:
-
+=== SELECTED TRANSACTION ===
 Transaction ID: {row['transaction_id']}
 Timestamp: {row['timestamp']}
 Customer ID: {row['customer_id']}
@@ -193,14 +207,23 @@ Region: {row['region']}
 Risk Score: {row['risk_score']}
 Actual Fraud Label: {'Yes' if row['is_fraud'] == 1 else 'No'}
 
+=== FULL DATASET STATISTICS ===
+Total Transactions: {total_tx:,}
+Total Value: €{total_value:,.2f}
+Actual Fraud Count: {fraud_count}
+Fraud Rate: {fraud_rate:.2f}%
+Average Amount: €{avg_amount:.2f}
+Payment Methods distribution: {methods}
+Regions distribution: {regions}
+
 User question: {question}
 
-Please answer the question based on the data above.
+Answer the question helpfully.
 """
     return call_openai(system_prompt, user_prompt)
 
 # -----------------------------
-# Main Area
+# Business Metrics
 # -----------------------------
 st.subheader("Business Metrics (Full Dataset)")
 col1, col2, col3, col4 = st.columns(4)
@@ -211,19 +234,45 @@ col4.metric("Actual Fraud Rate", f"{(df['is_fraud'].sum() / len(df) * 100):.2f}%
 
 st.markdown("---")
 
-st.subheader("GenAI Features (Powered by OpenAI gpt-4o-mini)")
+# -----------------------------
+# Charts 
+# -----------------------------
+st.subheader("Overview")
+
+col_left, col_right = st.columns(2)
+
+with col_left:
+    method_counts = df["payment_method"].value_counts().reset_index()
+    method_counts.columns = ["Payment Method", "Count"]
+    fig1 = px.pie(method_counts, names="Payment Method", values="Count",
+                  title="Transactions by Payment Method")
+    st.plotly_chart(fig1, use_container_width=True)
+
+with col_right:
+    region_counts = df["region"].value_counts().reset_index()
+    region_counts.columns = ["Region", "Count"]
+    fig2 = px.bar(region_counts, x="Region", y="Count",
+                  title="Transactions by Region", color="Count",
+                  color_continuous_scale="Blues")
+    fig2.update_layout(xaxis_tickangle=-30)
+    st.plotly_chart(fig2, use_container_width=True)
+
+st.markdown("---")
+
+# -----------------------------
+# GenAI Section
+# -----------------------------
+st.subheader("GenAI Features (OpenAI gpt-4o-mini)")
 
 if client is None:
-    st.warning("⚠️ OpenAI API key not found. Please open the file **api_key.txt** and paste your key there.")
+    st.warning("⚠️ OpenAI API key not found. Please put your key inside **api_key.txt**")
 else:
-    st.success("OpenAI client is ready (key loaded from api_key.txt)")
+    st.success("OpenAI client is ready")
 
 tab1, tab2 = st.tabs(["Dispute Summary", "AI Assistant Chat"])
 
 with tab1:
     st.markdown("### Automatic Dispute Summary")
-    st.markdown("Select a transaction in the sidebar, then click the button.")
-
     if st.button("Generate Dispute Summary", type="primary"):
         with st.spinner("Generating summary with OpenAI..."):
             summary = generate_dispute_summary(selected_row)
@@ -231,7 +280,7 @@ with tab1:
 
 with tab2:
     st.markdown("### AI Assistant")
-    st.markdown("Ask questions about the selected transaction.")
+    st.markdown("You can ask about the **selected transaction** or about the **overall dataset**.")
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -240,19 +289,22 @@ with tab2:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    if prompt := st.chat_input("Ask something about the selected transaction..."):
+    if prompt := st.chat_input("Ask about the transaction or the whole dataset..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                response = generate_chat_response(prompt, selected_row)
+                response = generate_chat_response(prompt, selected_row, df)
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
 
 st.markdown("---")
 
+# -----------------------------
+# High Risk Table
+# -----------------------------
 st.subheader("High Risk Transactions (Test Set – Score ≥ 70)")
 high_risk = df_test[df_test["risk_score"] >= 70].sort_values("risk_score", ascending=False)
 
@@ -265,4 +317,4 @@ if len(high_risk) > 0:
 else:
     st.info("No high-risk transactions found in the test set.")
 
-st.caption("Model: Random Forest (proper train/test) | GenAI: OpenAI gpt-4o-mini | Key loaded from api_key.txt")
+st.caption("Random Forest (train/test split) + OpenAI gpt-4o-mini | Key loaded from api_key.txt")
