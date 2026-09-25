@@ -11,7 +11,7 @@ __pycache__/
 # Streamlit
 .streamlit/
 
-# Data (optional - remove this line if you want to commit the CSV)
+# Data (optional)
 # payments_data.csv
 
 # OS files
