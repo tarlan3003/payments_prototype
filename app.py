@@ -15,6 +15,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from openai import OpenAI
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 import os
 
 # -----------------------------
@@ -86,9 +87,21 @@ def train_fraud_model(data):
     )
     model.fit(X_train, y_train)
 
-    return model, le_method, le_region, le_merchant, features, idx_test
+    # Calculate performance metrics on the test set
+    y_pred = model.predict(X_test)
+    y_proba = model.predict_proba(X_test)[:, 1]
 
-model, le_method, le_region, le_merchant, features, test_indices = train_fraud_model(df)
+    metrics = {
+        "accuracy": accuracy_score(y_test, y_pred),
+        "precision": precision_score(y_test, y_pred, zero_division=0),
+        "recall": recall_score(y_test, y_pred, zero_division=0),
+        "f1": f1_score(y_test, y_pred, zero_division=0),
+        "roc_auc": roc_auc_score(y_test, y_proba)
+    }
+
+    return model, le_method, le_region, le_merchant, features, idx_test, metrics
+
+model, le_method, le_region, le_merchant, features, test_indices, metrics = train_fraud_model(df)
 
 # Score test set
 df_test = df.loc[test_indices].copy().reset_index(drop=True)
@@ -233,6 +246,17 @@ col3.metric("Actual Fraud Count", f"{df['is_fraud'].sum()}")
 col4.metric("Actual Fraud Rate", f"{(df['is_fraud'].sum() / len(df) * 100):.2f}%")
 
 st.markdown("---")
+
+
+
+# Model Performance Metrics (on test set only)
+st.subheader("Fraud Model Performance (Test Set)")
+m1, m2, m3, m4, m5 = st.columns(5)
+m1.metric("Accuracy", f"{metrics['accuracy']:.3f}")
+m2.metric("Precision", f"{metrics['precision']:.3f}")
+m3.metric("Recall", f"{metrics['recall']:.3f}")
+m4.metric("F1-Score", f"{metrics['f1']:.3f}")
+m5.metric("ROC-AUC", f"{metrics['roc_auc']:.3f}")
 
 # -----------------------------
 # Charts 
