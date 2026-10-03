@@ -1,56 +1,29 @@
 # Real-Time Payments Analytics & Fraud Detection Prototype
 
-Azure-inspired end-to-end prototype for real-time payment analytics, fraud risk scoring, and GenAI-powered assistance.
+Interactive prototype for real-time payment analytics, fraud risk scoring, and AI-powered assistance.
 
-Built as a case study solution for a global digital payments provider handling **Card**, **ACH**, and **Wallet** transactions.
-
----
-
-## Project Overview
-
-This prototype demonstrates:
-
-- Real-time style dashboard (volume, value, by merchant & region)
-- Fraud risk scoring using a Machine Learning model
-- Automatic dispute summary generation
-- AI chatbot that can answer questions about individual transactions and the overall dataset
-
-The solution is designed to map closely to a real **Microsoft Azure** architecture.
-
----
-
-## Architecture Mapping (Prototype → Azure)
-
-| Prototype Component              | Azure Service                          |
-|----------------------------------|----------------------------------------|
-| Synthetic payment stream         | Azure Event Hubs                       |
-| Aggregations & Dashboard         | Azure Stream Analytics + Power BI      |
-| Fraud Model                      | Azure Machine Learning Online Endpoint |
-| Risk Scores storage              | Azure Cosmos DB                        |
-| Historical data                  | Azure Data Lake Storage Gen2           |
-| GenAI (Chat + Dispute Summary)   | Azure OpenAI + Azure AI Search (RAG)   |
+Built for a global digital payments use case handling **Card**, **ACH**, and **Wallet** transactions.
 
 ---
 
 ## Features
 
 - Interactive dashboard with key business metrics
-- Fraud risk score (0–100) for every transaction
+- Fraud risk scoring (0–100) using Machine Learning
 - Model performance metrics (Accuracy, Precision, Recall, F1, ROC-AUC)
 - High-risk transaction monitoring
-- AI-powered Dispute Summary generation
-- AI Chatbot (supports both transaction-specific and dataset-level questions)
-- Secure API key handling (`api_key.txt` is git-ignored)
+- Automatic Dispute Summary generation using AI
+- AI Chatbot that answers questions about individual transactions and the overall dataset
 
 ---
 
 ## Tech Stack
 
 - **Python**
-- **Streamlit** – Interactive web app
+- **Streamlit** – Web application
 - **Pandas & NumPy** – Data processing
 - **Scikit-learn** – Fraud detection model (Random Forest)
-- **Plotly** – Charts
+- **Plotly** – Interactive charts
 - **OpenAI API** (`gpt-4o-mini`) – GenAI features
 
 ---
